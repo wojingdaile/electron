@@ -52,6 +52,10 @@ class WebContents : public mate::EventEmitter,
                     public content::WebContentsObserver,
                     public content::GpuDataManagerObserver {
  public:
+  // For node.js callback function type: function(error, buffer)
+  typedef base::Callback<void(v8::Local<v8::Value>, v8::Local<v8::Value>)>
+      PrintToPDFCallback;
+
   // Create from an existing WebContents.
   static mate::Handle<WebContents> CreateFrom(
       v8::Isolate* isolate, brightray::InspectableWebContents* web_contents);
@@ -64,6 +68,8 @@ class WebContents : public mate::EventEmitter,
 
   void Destroy();
   bool IsAlive() const;
+  int GetID() const;
+  bool Equal(const WebContents* web_contents) const;
   void LoadURL(const GURL& url, const mate::Dictionary& options);
   base::string16 GetTitle() const;
   bool IsLoading() const;
@@ -73,8 +79,6 @@ class WebContents : public mate::EventEmitter,
   void GoBack();
   void GoForward();
   void GoToOffset(int offset);
-  int GetRoutingID() const;
-  int GetProcessID() const;
   bool IsCrashed() const;
   void SetUserAgent(const std::string& user_agent);
   void InsertCSS(const std::string& css);
@@ -85,8 +89,16 @@ class WebContents : public mate::EventEmitter,
   void ToggleDevTools();
   void InspectElement(int x, int y);
   void InspectServiceWorker();
+  v8::Local<v8::Value> Session(v8::Isolate* isolate);
   void HasServiceWorker(const base::Callback<void(bool)>&);
   void UnregisterServiceWorker(const base::Callback<void(bool)>&);
+  void SetAudioMuted(bool muted);
+  bool IsAudioMuted();
+  void Print(mate::Arguments* args);
+
+  // Print current page as PDF.
+  void PrintToPDF(const base::DictionaryValue& setting,
+                  const PrintToPDFCallback& callback);
 
   // Editing commands.
   void Undo();
@@ -228,8 +240,8 @@ class WebContents : public mate::EventEmitter,
   // Returns the default size of the guestview.
   gfx::Size GetDefaultSize() const;
 
-  // Unique ID for a guest WebContents.
-  int guest_instance_id_;
+
+  v8::Global<v8::Value> session_;
 
   // Stores whether the contents of the guest can be transparent.
   bool guest_opaque_;

@@ -173,7 +173,7 @@ class WebViewImpl
     params =
       instanceId: @viewInstanceId
       userAgentOverride: @userAgentOverride
-    for attributeName, attribute of @attributes
+    for own attributeName, attribute of @attributes
       params[attributeName] = attribute.getValue()
     #  When the WebView is not participating in layout (display:none)
     #  then getBoundingClientRect() would report a width and height of 0.
@@ -275,6 +275,8 @@ registerWebViewElement = ->
     "closeDevTools"
     "isDevToolsOpened"
     "inspectElement"
+    "setAudioMuted"
+    "isAudioMuted"
     "undo"
     "redo"
     "cut"
@@ -289,6 +291,8 @@ registerWebViewElement = ->
     "send"
     "getId"
     "inspectServiceWorker"
+    "print"
+    "printToPDF"
   ]
 
   # Forward proto.foo* method calls to WebViewImpl.foo*.

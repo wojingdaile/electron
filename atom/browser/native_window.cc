@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "atom/browser/atom_browser_context.h"
+#include "atom/browser/atom_browser_main_parts.h"
 #include "atom/browser/browser.h"
 #include "atom/browser/window_list.h"
 #include "atom/common/api/api_messages.h"
@@ -27,7 +28,6 @@
 #include "base/strings/utf_string_conversions.h"
 #include "brightray/browser/inspectable_web_contents.h"
 #include "brightray/browser/inspectable_web_contents_view.h"
-#include "chrome/browser/printing/print_view_manager_basic.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/notification_details.h"
@@ -96,8 +96,6 @@ NativeWindow::NativeWindow(content::WebContents* web_contents,
       has_dialog_attached_(false),
       zoom_factor_(1.0),
       weak_factory_(this) {
-  printing::PrintViewManagerBasic::CreateForWebContents(web_contents);
-
   InitWithWebContents(web_contents, this);
 
   options.Get(switches::kFrame, &has_frame_);
@@ -156,7 +154,8 @@ NativeWindow::~NativeWindow() {
 
 // static
 NativeWindow* NativeWindow::Create(const mate::Dictionary& options) {
-  content::WebContents::CreateParams create_params(AtomBrowserContext::Get());
+  auto browser_context = AtomBrowserMainParts::Get()->browser_context();
+  content::WebContents::CreateParams create_params(browser_context);
   return Create(content::WebContents::Create(create_params), options);
 }
 
@@ -255,11 +254,6 @@ bool NativeWindow::IsDocumentEdited() {
 }
 
 void NativeWindow::SetMenu(ui::MenuModel* menu) {
-}
-
-void NativeWindow::Print(bool silent, bool print_background) {
-  printing::PrintViewManagerBasic::FromWebContents(GetWebContents())->
-      PrintNow(silent, print_background);
 }
 
 void NativeWindow::ShowDefinitionForSelection() {

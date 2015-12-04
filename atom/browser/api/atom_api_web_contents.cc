@@ -6,11 +6,13 @@
 
 #include <set>
 
+#include "atom/browser/api/atom_api_session.h"
 #include "atom/browser/atom_browser_client.h"
 #include "atom/browser/atom_browser_context.h"
+#include "atom/browser/atom_browser_main_parts.h"
 #include "atom/browser/native_window.h"
-#include "atom/browser/web_view_manager.h"
 #include "atom/common/api/api_messages.h"
+#include "atom/common/event_emitter_caller.h"
 #include "atom/common/native_mate_converters/gfx_converter.h"
 #include "atom/common/native_mate_converters/gurl_converter.h"
 #include "atom/common/native_mate_converters/image_converter.h"
@@ -19,6 +21,8 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "brightray/browser/inspectable_web_contents.h"
+#include "chrome/browser/printing/print_view_manager_basic.h"
+#include "chrome/browser/printing/print_preview_message_handler.h"
 #include "content/public/browser/favicon_status.h"
 #include "content/public/browser/guest_host.h"
 #include "content/public/browser/navigation_details.h"
@@ -40,6 +44,15 @@
 #include "net/url_request/url_request_context.h"
 
 #include "atom/common/node_includes.h"
+
+namespace {
+
+struct PrintSettings {
+  bool silent;
+  bool print_background;
+};
+
+}  // namespace
 
 namespace mate {
 
@@ -65,6 +78,35 @@ struct Converter<atom::api::SetSizeParams> {
   }
 };
 
+template<>
+struct Converter<PrintSettings> {
+  static bool FromV8(v8::Isolate* isolate, v8::Local<v8::Value> val,
+                     PrintSettings* out) {
+    mate::Dictionary dict;
+    if (!ConvertFromV8(isolate, val, &dict))
+      return false;
+    dict.Get("silent", &(out->silent));
+    dict.Get("printBackground", &(out->print_background));
+    return true;
+  }
+};
+
+template<>
+struct Converter<WindowOpenDisposition> {
+  static v8::Local<v8::Value> ToV8(v8::Isolate* isolate,
+                                   WindowOpenDisposition val) {
+    std::string disposition = "other";
+    switch (val) {
+      case CURRENT_TAB: disposition = "default"; break;
+      case NEW_FOREGROUND_TAB: disposition = "foreground-tab"; break;
+      case NEW_BACKGROUND_TAB: disposition = "background-tab"; break;
+      case NEW_POPUP: case NEW_WINDOW: disposition = "new-window"; break;
+      default: break;
+    }
+    return mate::ConvertToV8(isolate, disposition);
+  }
+};
+
 }  // namespace mate
 
 
@@ -82,15 +124,6 @@ v8::Persistent<v8::ObjectTemplate> template_;
 // The wrapWebContents funtion which is implemented in JavaScript
 using WrapWebContentsCallback = base::Callback<void(v8::Local<v8::Value>)>;
 WrapWebContentsCallback g_wrap_web_contents;
-
-// Get the window that has the |guest| embedded.
-NativeWindow* GetWindowFromGuest(const content::WebContents* guest) {
-  WebViewManager::WebViewInfo info;
-  if (WebViewManager::GetInfoForWebContents(guest, &info))
-    return NativeWindow::FromWebContents(info.embedder);
-  else
-    return nullptr;
-}
 
 content::ServiceWorkerContext* GetServiceWorkerContext(
     const content::WebContents* web_contents) {
@@ -117,7 +150,6 @@ WebContents::WebContents(brightray::InspectableWebContents* web_contents)
 WebContents::WebContents(content::WebContents* web_contents)
     : CommonWebContentsDelegate(false),
       content::WebContentsObserver(web_contents),
-      guest_instance_id_(-1),
       guest_opaque_(true),
       guest_host_(nullptr),
       auto_size_enabled_(false),
@@ -127,24 +159,24 @@ WebContents::WebContents(content::WebContents* web_contents)
 
 WebContents::WebContents(const mate::Dictionary& options)
     : CommonWebContentsDelegate(true),
-      guest_instance_id_(-1),
       guest_opaque_(true),
       guest_host_(nullptr),
       auto_size_enabled_(false),
       is_full_page_plugin_(false) {
-  options.Get("guestInstanceId", &guest_instance_id_);
-
-  auto browser_context = AtomBrowserContext::Get();
+  auto browser_context = AtomBrowserMainParts::Get()->browser_context();
   content::SiteInstance* site_instance = content::SiteInstance::CreateForURL(
       browser_context, GURL("chrome-guest://fake-host"));
 
   content::WebContents::CreateParams params(browser_context, site_instance);
-  bool is_guest;
-  if (options.Get("isGuest", &is_guest) && is_guest)
-    params.guest_delegate = this;
-
+  params.guest_delegate = this;
   auto web_contents = content::WebContents::Create(params);
-  InitWithWebContents(web_contents, GetWindowFromGuest(web_contents));
+
+  NativeWindow* owner_window = nullptr;
+  WebContents* embedder = nullptr;
+  if (options.Get("embedder", &embedder) && embedder)
+    owner_window = NativeWindow::FromWebContents(embedder->web_contents());
+
+  InitWithWebContents(web_contents, owner_window);
   inspectable_web_contents_ = managed_web_contents();
 
   Observe(GetWebContents());
@@ -172,10 +204,7 @@ bool WebContents::ShouldCreateWebContents(
     const GURL& target_url,
     const std::string& partition_id,
     content::SessionStorageNamespace* session_storage_namespace) {
-  Emit("-new-window",
-       target_url,
-       frame_name,
-       static_cast<int>(NEW_FOREGROUND_TAB));
+  Emit("new-window", target_url, frame_name, NEW_FOREGROUND_TAB);
   return false;
 }
 
@@ -187,7 +216,7 @@ content::WebContents* WebContents::OpenURLFromTab(
     content::WebContents* source,
     const content::OpenURLParams& params) {
   if (params.disposition != CURRENT_TAB) {
-    Emit("-new-window", params.url, "", static_cast<int>(params.disposition));
+    Emit("new-window", params.url, "", params.disposition);
     return nullptr;
   }
 
@@ -221,9 +250,17 @@ void WebContents::ExitFullscreenModeForTab(content::WebContents* source) {
 }
 
 void WebContents::RenderViewDeleted(content::RenderViewHost* render_view_host) {
-  Emit("render-view-deleted",
-       render_view_host->GetProcess()->GetID(),
-       render_view_host->GetRoutingID());
+  int process_id = render_view_host->GetProcess()->GetID();
+  Emit("render-view-deleted", process_id);
+
+  // process.emit('ATOM_BROWSER_RELEASE_RENDER_VIEW', processId);
+  // Tell the rpc server that a render view has been deleted and we need to
+  // release all objects owned by it.
+  v8::Locker locker(isolate());
+  v8::HandleScope handle_scope(isolate());
+  node::Environment* env = node::Environment::GetCurrent(isolate());
+  mate::EmitEvent(isolate(), env->process_object(),
+                  "ATOM_BROWSER_RELEASE_RENDER_VIEW", process_id);
 }
 
 void WebContents::RenderProcessGone(base::TerminationStatus status) {
@@ -284,18 +321,29 @@ void WebContents::DidStopLoading() {
 
 void WebContents::DidGetResourceResponseStart(
     const content::ResourceRequestDetails& details) {
-  v8::Isolate* isolate = v8::Isolate::GetCurrent();
-  v8::Locker locker(isolate);
-  v8::HandleScope handle_scope(isolate);
-  mate::Dictionary response_headers(isolate, v8::Object::New(isolate));
+  v8::Locker locker(isolate());
+  v8::HandleScope handle_scope(isolate());
+  base::DictionaryValue response_headers;
 
   net::HttpResponseHeaders* headers = details.headers.get();
+  if (!headers)
+    return;
   void* iter = nullptr;
   std::string key;
   std::string value;
-  while (headers && headers->EnumerateHeaderLines(&iter, &key, &value))
-    response_headers.Set(base::StringToLowerASCII(key),
-                         base::StringToLowerASCII(value));
+  while (headers->EnumerateHeaderLines(&iter, &key, &value)) {
+    key = base::StringToLowerASCII(key);
+    value = base::StringToLowerASCII(value);
+    if (response_headers.HasKey(key)) {
+      base::ListValue* values = nullptr;
+      if (response_headers.GetList(key, &values))
+        values->AppendString(value);
+    } else {
+      scoped_ptr<base::ListValue> values(new base::ListValue());
+      values->AppendString(value);
+      response_headers.Set(key, values.Pass());
+    }
+  }
 
   Emit("did-get-response-details",
        details.socket_address.IsEmpty(),
@@ -426,16 +474,24 @@ bool WebContents::IsAlive() const {
   return web_contents() != NULL;
 }
 
+int WebContents::GetID() const {
+  return web_contents()->GetRenderProcessHost()->GetID();
+}
+
+bool WebContents::Equal(const WebContents* web_contents) const {
+  return GetID() == web_contents->GetID();
+}
+
 void WebContents::LoadURL(const GURL& url, const mate::Dictionary& options) {
   content::NavigationController::LoadURLParams params(url);
 
   GURL http_referrer;
-  if (options.Get("httpreferrer", &http_referrer))
+  if (options.Get("httpReferrer", &http_referrer))
     params.referrer = content::Referrer(http_referrer.GetAsReferrer(),
                                         blink::WebReferrerPolicyDefault);
 
   std::string user_agent;
-  if (options.Get("useragent", &user_agent))
+  if (options.Get("userAgent", &user_agent))
     SetUserAgent(user_agent);
 
   params.transition_type = ui::PAGE_TRANSITION_TYPED;
@@ -477,14 +533,6 @@ void WebContents::GoForward() {
 void WebContents::GoToOffset(int offset) {
   atom::AtomBrowserClient::SuppressRendererProcessRestartForOnce();
   web_contents()->GetController().GoToOffset(offset);
-}
-
-int WebContents::GetRoutingID() const {
-  return web_contents()->GetRoutingID();
-}
-
-int WebContents::GetProcessID() const {
-  return web_contents()->GetRenderProcessHost()->GetID();
 }
 
 bool WebContents::IsCrashed() const {
@@ -558,6 +606,16 @@ void WebContents::InspectServiceWorker() {
   }
 }
 
+v8::Local<v8::Value> WebContents::Session(v8::Isolate* isolate) {
+  if (session_.IsEmpty()) {
+    mate::Handle<api::Session> handle = Session::Create(
+        isolate,
+        static_cast<AtomBrowserContext*>(web_contents()->GetBrowserContext()));
+    session_.Reset(isolate, handle.ToV8());
+  }
+  return v8::Local<v8::Value>::New(isolate, session_);
+}
+
 void WebContents::HasServiceWorker(
     const base::Callback<void(bool)>& callback) {
   auto context = GetServiceWorkerContext(web_contents());
@@ -577,6 +635,31 @@ void WebContents::UnregisterServiceWorker(
 
   context->UnregisterServiceWorker(web_contents()->GetLastCommittedURL(),
                                    callback);
+}
+
+void WebContents::SetAudioMuted(bool muted) {
+  web_contents()->SetAudioMuted(muted);
+}
+
+bool WebContents::IsAudioMuted() {
+  return web_contents()->IsAudioMuted();
+}
+
+void WebContents::Print(mate::Arguments* args) {
+  PrintSettings settings = { false, false };
+  if (args->Length() == 1 && !args->GetNext(&settings)) {
+    args->ThrowError();
+    return;
+  }
+
+  printing::PrintViewManagerBasic::FromWebContents(web_contents())->
+      PrintNow(settings.silent, settings.print_background);
+}
+
+void WebContents::PrintToPDF(const base::DictionaryValue& setting,
+                             const PrintToPDFCallback& callback) {
+  printing::PrintPreviewMessageHandler::FromWebContents(web_contents())->
+      PrintToPDF(setting, callback);
 }
 
 void WebContents::Undo() {
@@ -685,18 +768,15 @@ void WebContents::SetAllowTransparency(bool allow) {
   if (guest_opaque_ != allow)
     return;
 
+  auto render_view_host = web_contents()->GetRenderViewHost();
   guest_opaque_ = !allow;
-  if (!web_contents()->GetRenderViewHost()->GetView())
+  if (!render_view_host->GetView())
     return;
 
   if (guest_opaque_) {
-    web_contents()
-        ->GetRenderViewHost()
-        ->GetView()
-        ->SetBackgroundColorToDefault();
+    render_view_host->GetView()->SetBackgroundColorToDefault();
   } else {
-    web_contents()->GetRenderViewHost()->GetView()->SetBackgroundColor(
-        SK_ColorTRANSPARENT);
+    render_view_host->GetView()->SetBackgroundColor(SK_ColorTRANSPARENT);
   }
 }
 
@@ -710,6 +790,8 @@ mate::ObjectTemplateBuilder WebContents::GetObjectTemplateBuilder(
     template_.Reset(isolate, mate::ObjectTemplateBuilder(isolate)
         .SetMethod("destroy", &WebContents::Destroy)
         .SetMethod("isAlive", &WebContents::IsAlive)
+        .SetMethod("getId", &WebContents::GetID)
+        .SetMethod("equal", &WebContents::Equal)
         .SetMethod("_loadUrl", &WebContents::LoadURL)
         .SetMethod("getTitle", &WebContents::GetTitle)
         .SetMethod("isLoading", &WebContents::IsLoading)
@@ -719,8 +801,6 @@ mate::ObjectTemplateBuilder WebContents::GetObjectTemplateBuilder(
         .SetMethod("_goBack", &WebContents::GoBack)
         .SetMethod("_goForward", &WebContents::GoForward)
         .SetMethod("_goToOffset", &WebContents::GoToOffset)
-        .SetMethod("getRoutingId", &WebContents::GetRoutingID)
-        .SetMethod("getProcessId", &WebContents::GetProcessID)
         .SetMethod("isCrashed", &WebContents::IsCrashed)
         .SetMethod("setUserAgent", &WebContents::SetUserAgent)
         .SetMethod("insertCSS", &WebContents::InsertCSS)
@@ -730,6 +810,8 @@ mate::ObjectTemplateBuilder WebContents::GetObjectTemplateBuilder(
         .SetMethod("isDevToolsOpened", &WebContents::IsDevToolsOpened)
         .SetMethod("toggleDevTools", &WebContents::ToggleDevTools)
         .SetMethod("inspectElement", &WebContents::InspectElement)
+        .SetMethod("setAudioMuted", &WebContents::SetAudioMuted)
+        .SetMethod("isAudioMuted", &WebContents::IsAudioMuted)
         .SetMethod("undo", &WebContents::Undo)
         .SetMethod("redo", &WebContents::Redo)
         .SetMethod("cut", &WebContents::Cut)
@@ -749,6 +831,9 @@ mate::ObjectTemplateBuilder WebContents::GetObjectTemplateBuilder(
         .SetMethod("unregisterServiceWorker",
                    &WebContents::UnregisterServiceWorker)
         .SetMethod("inspectServiceWorker", &WebContents::InspectServiceWorker)
+        .SetMethod("print", &WebContents::Print)
+        .SetMethod("_printToPDF", &WebContents::PrintToPDF)
+        .SetProperty("session", &WebContents::Session)
         .Build());
 
   return mate::ObjectTemplateBuilder(

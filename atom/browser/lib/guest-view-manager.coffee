@@ -38,9 +38,7 @@ createGuest = (embedder, params) ->
   webViewManager ?= process.atomBinding 'web_view_manager'
 
   id = getNextInstanceId embedder
-  guest = webContents.create
-    isGuest: true
-    guestInstanceId: id
+  guest = webContents.create {embedder}
   guestInstances[id] = {guest, embedder}
 
   # Destroy guest when the embedder is gone or navigated.
@@ -68,8 +66,8 @@ createGuest = (embedder, params) ->
 
     if params.src
       opts = {}
-      opts.httpreferrer = params.httpreferrer if params.httpreferrer
-      opts.useragent = params.useragent if params.useragent
+      opts.httpReferrer = params.httpreferrer if params.httpreferrer
+      opts.userAgent = params.useragent if params.useragent
       @loadUrl params.src, opts
 
     if params.allowtransparency?

@@ -11,12 +11,17 @@
 #include "atom/browser/native_window.h"
 #include "atom/browser/ui/file_dialog.h"
 #include "atom/browser/web_dialog_helper.h"
+#include "base/files/file_util.h"
+#include "chrome/browser/printing/print_preview_message_handler.h"
+#include "chrome/browser/printing/print_view_manager_basic.h"
 #include "chrome/browser/ui/browser_dialogs.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/child_process_security_policy.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
-#include "content/public/common/renderer_preferences.h"
 #include "storage/browser/fileapi/isolated_context.h"
+
+using content::BrowserThread;
 
 namespace atom {
 
@@ -84,6 +89,22 @@ base::DictionaryValue* CreateFileSystemValue(const FileSystem& file_system) {
   return file_system_value;
 }
 
+void WriteToFile(const base::FilePath& path,
+                 const std::string& content) {
+  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  DCHECK(!path.empty());
+
+  base::WriteFile(path, content.data(), content.size());
+}
+
+void AppendToFile(const base::FilePath& path,
+                  const std::string& content) {
+  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  DCHECK(!path.empty());
+
+  base::AppendToFile(path, content.data(), content.size());
+}
+
 }  // namespace
 
 CommonWebContentsDelegate::CommonWebContentsDelegate(bool is_guest)
@@ -102,11 +123,8 @@ void CommonWebContentsDelegate::InitWithWebContents(
   owner_window_ = owner_window;
   web_contents->SetDelegate(this);
 
-  // Tell renderer to handle all navigations in browser.
-  auto preferences = web_contents->GetMutableRendererPrefs();
-  preferences->browser_handles_non_local_top_level_requests = true;
-  preferences->browser_handles_all_top_level_requests = true;
-  web_contents->GetRenderViewHost()->SyncRendererPrefs();
+  printing::PrintViewManagerBasic::CreateForWebContents(web_contents);
+  printing::PrintPreviewMessageHandler::CreateForWebContents(web_contents);
 
   // Create InspectableWebContents.
   web_contents_.reset(brightray::InspectableWebContents::Create(web_contents));
@@ -238,12 +256,11 @@ void CommonWebContentsDelegate::DevToolsSaveToFile(
   }
 
   saved_files_[url] = path;
-  base::WriteFile(path, content.data(), content.size());
-
-  // Notify devtools.
-  base::StringValue url_value(url);
-  web_contents_->CallClientFunction(
-      "DevToolsAPI.savedURL", &url_value, nullptr, nullptr);
+  BrowserThread::PostTaskAndReply(
+      BrowserThread::FILE, FROM_HERE,
+      base::Bind(&WriteToFile, path, content),
+      base::Bind(&CommonWebContentsDelegate::OnDevToolsSaveToFile,
+                 base::Unretained(this), url));
 }
 
 void CommonWebContentsDelegate::DevToolsAppendToFile(
@@ -251,12 +268,12 @@ void CommonWebContentsDelegate::DevToolsAppendToFile(
   PathsMap::iterator it = saved_files_.find(url);
   if (it == saved_files_.end())
     return;
-  base::AppendToFile(it->second, content.data(), content.size());
 
-  // Notify devtools.
-  base::StringValue url_value(url);
-  web_contents_->CallClientFunction(
-      "DevToolsAPI.appendedToURL", &url_value, nullptr, nullptr);
+  BrowserThread::PostTaskAndReply(
+      BrowserThread::FILE, FROM_HERE,
+      base::Bind(&AppendToFile, it->second, content),
+      base::Bind(&CommonWebContentsDelegate::OnDevToolsAppendToFile,
+                 base::Unretained(this), url));
 }
 
 void CommonWebContentsDelegate::DevToolsAddFileSystem() {
@@ -317,6 +334,22 @@ void CommonWebContentsDelegate::DevToolsRemoveFileSystem(
        &file_system_path_value,
        nullptr,
        nullptr);
+}
+
+void CommonWebContentsDelegate::OnDevToolsSaveToFile(
+    const std::string& url) {
+  // Notify DevTools.
+  base::StringValue url_value(url);
+  web_contents_->CallClientFunction(
+      "DevToolsAPI.savedURL", &url_value, nullptr, nullptr);
+}
+
+void CommonWebContentsDelegate::OnDevToolsAppendToFile(
+    const std::string& url) {
+  // Notify DevTools.
+  base::StringValue url_value(url);
+  web_contents_->CallClientFunction(
+      "DevToolsAPI.appendedToURL", &url_value, nullptr, nullptr);
 }
 
 void CommonWebContentsDelegate::SetHtmlApiFullscreen(bool enter_fullscreen) {

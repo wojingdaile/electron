@@ -18,7 +18,7 @@ form, the `webview` tag includes the `src` of the web page and css styles that
 control the appearance of the `webview` container:
 
 ```html
-<webview id="foo" src="https://www.github.com/" style="width:640px; height:480px"></webview>
+<webview id="foo" src="https://www.github.com/" style="display:inline-block; width:640px; height:480px"></webview>
 ```
 
 If you want to control the guest content in any way, you can write JavaScript
@@ -129,6 +129,14 @@ Sets the user agent for the guest page before the page is navigated to. Once the
 If "on", the guest page will have web security disabled.
 
 ## Methods
+
+The webview element must be loaded before using the methods.  
+**Example**
+```javascript
+webview.addEventListener("dom-ready", function(){
+  webview.openDevTools();
+});
+```
 
 ### `<webview>`.getUrl()
 
@@ -242,6 +250,16 @@ Starts inspecting element at position (`x`, `y`) of guest page.
 
 Opens the devtools for the service worker context present in the guest page.
 
+### `<webview>`.setAudioMuted(muted)
+
++ `muted` Boolean
+
+Set guest page muted.
+
+### `<webview>`.isAudioMuted()
+
+Returns whether guest page has been muted.
+
 ### `<webview>`.undo()
 
 Executes editing command `undo` in page.
@@ -289,6 +307,14 @@ Executes editing command `replace` in page.
 * `text` String
 
 Executes editing command `replaceMisspelling` in page.
+
+### `<webview>.print([options])`
+
+Prints webview's web page. Same with `webContents.print([options])`.
+
+### `<webview>.printToPDF(options, callback)`
+
+Prints webview's web page as PDF, Same with `webContents.printToPDF(options, callback)`
 
 ### `<webview>`.send(channel[, args...])
 
@@ -390,7 +416,7 @@ without regard for log level or other properties.
 
 ```javascript
 webview.addEventListener('console-message', function(e) {
-  console.log('Guest page logged a message: ', e.message);
+  console.log('Guest page logged a message:', e.message);
 });
 ```
 
@@ -448,7 +474,7 @@ webview.send('ping');
 var ipc = require('ipc');
 ipc.on('ping', function() {
   ipc.sendToHost('pong');
-})
+});
 ```
 
 ### crashed

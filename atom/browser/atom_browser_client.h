@@ -6,11 +6,17 @@
 #define ATOM_BROWSER_ATOM_BROWSER_CLIENT_H_
 
 #include <string>
+#include <vector>
 
 #include "brightray/browser/browser_client.h"
 
 namespace content {
 class QuotaPermissionContext;
+class ClientCertificateDelegate;
+}
+
+namespace net {
+class SSLCertRequestInfo;
 }
 
 namespace atom {
@@ -22,6 +28,8 @@ class AtomBrowserClient : public brightray::BrowserClient {
 
   // Don't force renderer process to restart for once.
   static void SuppressRendererProcessRestartForOnce();
+  // Custom schemes to be registered to standard.
+  static void SetCustomSchemes(const std::vector<std::string>& schemes);
 
  protected:
   // content::ContentBrowserClient:
@@ -41,6 +49,10 @@ class AtomBrowserClient : public brightray::BrowserClient {
                                       int child_process_id) override;
   void DidCreatePpapiPlugin(content::BrowserPpapiHost* browser_host) override;
   content::QuotaPermissionContext* CreateQuotaPermissionContext() override;
+  void SelectClientCertificate(
+      content::WebContents* web_contents,
+      net::SSLCertRequestInfo* cert_request_info,
+      scoped_ptr<content::ClientCertificateDelegate> delegate) override;
 
  private:
   brightray::BrowserMainParts* OverrideCreateBrowserMainParts(

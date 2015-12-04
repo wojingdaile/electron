@@ -20,32 +20,6 @@
 
 #include "atom/common/node_includes.h"
 
-namespace {
-
-struct PrintSettings {
-  bool silent;
-  bool print_background;
-};
-
-}  // namespace
-
-namespace mate {
-
-template<>
-struct Converter<PrintSettings> {
-  static bool FromV8(v8::Isolate* isolate, v8::Local<v8::Value> val,
-                     PrintSettings* out) {
-    mate::Dictionary dict;
-    if (!ConvertFromV8(isolate, val, &dict))
-      return false;
-    dict.Get("silent", &(out->silent));
-    dict.Get("printBackground", &(out->print_background));
-    return true;
-  }
-};
-
-}  // namespace mate
-
 namespace atom {
 
 namespace api {
@@ -84,7 +58,7 @@ void Window::WillCreatePopupWindow(const base::string16& frame_name,
                                    const GURL& target_url,
                                    const std::string& partition_id,
                                    WindowOpenDisposition disposition) {
-  Emit("-new-window", target_url, frame_name, static_cast<int>(disposition));
+  Emit("-new-window", target_url, frame_name);
 }
 
 void Window::WillNavigate(bool* prevent_default, const GURL& url) {
@@ -168,20 +142,18 @@ void Window::OnDevToolsFocus() {
 void Window::OnDevToolsOpened() {
   Emit("devtools-opened");
 
-  v8::Isolate* isolate = v8::Isolate::GetCurrent();
-  v8::Locker locker(isolate);
-  v8::HandleScope handle_scope(isolate);
-  auto handle =
-      WebContents::CreateFrom(isolate, window_->GetDevToolsWebContents());
-  devtools_web_contents_.Reset(isolate, handle.ToV8());
+  v8::Locker locker(isolate());
+  v8::HandleScope handle_scope(isolate());
+  auto handle = WebContents::CreateFrom(isolate(),
+                                        window_->GetDevToolsWebContents());
+  devtools_web_contents_.Reset(isolate(), handle.ToV8());
 }
 
 void Window::OnDevToolsClosed() {
   Emit("devtools-closed");
 
-  v8::Isolate* isolate = v8::Isolate::GetCurrent();
-  v8::Locker locker(isolate);
-  v8::HandleScope handle_scope(isolate);
+  v8::Locker locker(isolate());
+  v8::HandleScope handle_scope(isolate());
   devtools_web_contents_.Reset();
 }
 
@@ -189,7 +161,8 @@ void Window::OnDevToolsClosed() {
 mate::Wrappable* Window::New(v8::Isolate* isolate,
                              const mate::Dictionary& options) {
   if (!Browser::Get()->is_ready()) {
-    node::ThrowError("Cannot create BrowserWindow before app is ready");
+    node::ThrowError(isolate,
+                     "Cannot create BrowserWindow before app is ready");
     return nullptr;
   }
   return new Window(options);
@@ -419,16 +392,6 @@ void Window::CapturePage(mate::Arguments* args) {
       rect, base::Bind(&OnCapturePageDone, args->isolate(), callback));
 }
 
-void Window::Print(mate::Arguments* args) {
-  PrintSettings settings = { false, false };;
-  if (args->Length() == 1 && !args->GetNext(&settings)) {
-    args->ThrowError();
-    return;
-  }
-
-  window_->Print(settings.silent, settings.print_background);
-}
-
 void Window::SetProgressBar(double progress) {
   window_->SetProgressBar(progress);
 }
@@ -540,7 +503,6 @@ void Window::BuildPrototype(v8::Isolate* isolate,
       .SetMethod("blurWebView", &Window::BlurWebView)
       .SetMethod("isWebViewFocused", &Window::IsWebViewFocused)
       .SetMethod("capturePage", &Window::CapturePage)
-      .SetMethod("print", &Window::Print)
       .SetMethod("setProgressBar", &Window::SetProgressBar)
       .SetMethod("setOverlayIcon", &Window::SetOverlayIcon)
       .SetMethod("_setMenu", &Window::SetMenu)

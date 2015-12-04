@@ -5,6 +5,7 @@
 #include "atom/browser/atom_browser_context.h"
 
 #include "atom/browser/atom_browser_main_parts.h"
+#include "atom/browser/atom_download_manager_delegate.h"
 #include "atom/browser/net/atom_url_request_job_factory.h"
 #include "atom/browser/net/asar/asar_protocol_handler.h"
 #include "atom/browser/net/http_protocol_handler.h"
@@ -13,7 +14,6 @@
 #include "base/command_line.h"
 #include "base/threading/sequenced_worker_pool.h"
 #include "base/threading/worker_pool.h"
-#include "chrome/browser/browser_process.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/common/url_constants.h"
 #include "net/ftp/ftp_network_layer.h"
@@ -40,8 +40,7 @@ class NoCacheBackend : public net::HttpCache::BackendFactory {
 }  // namespace
 
 AtomBrowserContext::AtomBrowserContext()
-    : fake_browser_process_(new BrowserProcess),
-      job_factory_(new AtomURLRequestJobFactory) {
+    : job_factory_(new AtomURLRequestJobFactory) {
 }
 
 AtomBrowserContext::~AtomBrowserContext() {
@@ -100,16 +99,20 @@ AtomBrowserContext::CreateHttpCacheBackendFactory(
     return brightray::BrowserContext::CreateHttpCacheBackendFactory(base_path);
 }
 
+content::DownloadManagerDelegate*
+AtomBrowserContext::GetDownloadManagerDelegate() {
+  if (!download_manager_delegate_.get()) {
+    auto download_manager = content::BrowserContext::GetDownloadManager(this);
+    download_manager_delegate_.reset(
+        new AtomDownloadManagerDelegate(download_manager));
+  }
+  return download_manager_delegate_.get();
+}
+
 content::BrowserPluginGuestManager* AtomBrowserContext::GetGuestManager() {
   if (!guest_manager_)
     guest_manager_.reset(new WebViewManager(this));
   return guest_manager_.get();
-}
-
-// static
-AtomBrowserContext* AtomBrowserContext::Get() {
-  return static_cast<AtomBrowserContext*>(
-      AtomBrowserMainParts::Get()->browser_context());
 }
 
 }  // namespace atom

@@ -14,16 +14,21 @@
 #include "atom/browser/window_list.h"
 #include "atom/common/options_switches.h"
 #include "base/command_line.h"
+#include "base/files/file_util.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "chrome/browser/printing/printing_message_filter.h"
 #include "chrome/browser/renderer_host/pepper/chrome_browser_pepper_host_factory.h"
 #include "chrome/browser/speech/tts_message_filter.h"
 #include "content/public/browser/browser_ppapi_host.h"
+#include "content/public/browser/client_certificate_delegate.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/site_instance.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/web_preferences.h"
+#include "net/cert/x509_certificate.h"
+#include "net/ssl/ssl_cert_request_info.h"
 #include "ppapi/host/ppapi_host.h"
 #include "ui/base/l10n/l10n_util.h"
 
@@ -38,6 +43,9 @@ int kDefaultRoutingID = 2;
 
 // Next navigation should not restart renderer process.
 bool g_suppress_renderer_process_restart = false;
+
+// Custom schemes to be registered to standard.
+std::string g_custom_schemes = "";
 
 // Find out the owner of the child process according to |process_id|.
 enum ProcessOwner {
@@ -67,11 +75,33 @@ ProcessOwner GetProcessOwner(int process_id,
   return OWNER_NONE;
 }
 
+scoped_refptr<net::X509Certificate> ImportCertFromFile(
+    const base::FilePath& path) {
+  std::string cert_data;
+  if (!base::ReadFileToString(path, &cert_data))
+    return nullptr;
+
+  net::CertificateList certs =
+      net::X509Certificate::CreateCertificateListFromBytes(
+          cert_data.data(), cert_data.size(),
+          net::X509Certificate::FORMAT_AUTO);
+
+  if (certs.empty())
+    return nullptr;
+
+  return certs[0];
+}
+
 }  // namespace
 
 // static
 void AtomBrowserClient::SuppressRendererProcessRestartForOnce() {
   g_suppress_renderer_process_restart = true;
+}
+
+void AtomBrowserClient::SetCustomSchemes(
+    const std::vector<std::string>& schemes) {
+  g_custom_schemes = JoinString(schemes, ',');
 }
 
 AtomBrowserClient::AtomBrowserClient() {
@@ -156,6 +186,10 @@ void AtomBrowserClient::AppendExtraCommandLineSwitches(
   if (process_type != "renderer")
     return;
 
+  if (!g_custom_schemes.empty())
+    command_line->AppendSwitchASCII(switches::kRegisterStandardSchemes,
+                                    g_custom_schemes);
+
   NativeWindow* window;
   WebViewManager::WebViewInfo info;
   ProcessOwner owner = GetProcessOwner(process_id, &window, &info);
@@ -187,6 +221,29 @@ void AtomBrowserClient::DidCreatePpapiPlugin(
 content::QuotaPermissionContext*
     AtomBrowserClient::CreateQuotaPermissionContext() {
   return new AtomQuotaPermissionContext;
+}
+
+void AtomBrowserClient::SelectClientCertificate(
+    content::WebContents* web_contents,
+    net::SSLCertRequestInfo* cert_request_info,
+    scoped_ptr<content::ClientCertificateDelegate> delegate) {
+  auto command_line = base::CommandLine::ForCurrentProcess();
+  auto cert_path = command_line->GetSwitchValueNative(
+      switches::kClientCertificate);
+
+  // TODO(zcbenz): allow users to select certificate from
+  // client_cert list. Right now defaults to first certificate
+  // in the list.
+  scoped_refptr<net::X509Certificate> certificate;
+  if (cert_path.empty()) {
+    if (!cert_request_info->client_certs.empty())
+      certificate = cert_request_info->client_certs[0];
+  } else {
+    certificate = ImportCertFromFile(base::FilePath(cert_path));
+  }
+
+  if (certificate.get())
+    delegate->ContinueWithCertificate(certificate.get());
 }
 
 brightray::BrowserMainParts* AtomBrowserClient::OverrideCreateBrowserMainParts(

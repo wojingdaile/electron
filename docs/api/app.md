@@ -62,9 +62,12 @@ Emitted when application is quitting.
 * `event` Event
 * `path` String
 
-Emitted when user wants to open a file with the application, it usually
-happens when the application is already opened and then OS wants to reuse the
-application to open file.
+Emitted when user wants to open a file with the application, it usually happens
+when the application is already opened and then OS wants to reuse the
+application to open file. But it is also emitted when a file is dropped onto the
+dock and the application is not yet running. Make sure to listen to open-file
+very early in your application startup to handle this case (even before the
+`ready` event is emitted).
 
 You should call `event.preventDefault()` if you want to handle this event.
 
@@ -83,6 +86,20 @@ You should call `event.preventDefault()` if you want to handle this event.
 Emitted when the application is activated while there is no opened windows. It
 usually happens when user has closed all of application's windows and then
 click on the application's dock icon.
+
+## Event: browser-window-blur
+
+* `event` Event
+* `window` BrowserWindow
+
+Emitted when a [browserWindow](browser-window.md) gets blurred.
+
+## Event: browser-window-focus
+
+* `event` Event
+* `window` BrowserWindow
+
+Emitted when a [browserWindow](browser-window.md) gets focused.
 
 ## app.quit()
 

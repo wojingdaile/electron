@@ -9,6 +9,7 @@
 
 #include "base/memory/ref_counted_memory.h"
 #include "base/memory/weak_ptr.h"
+#include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_job.h"
 #include "net/url_request/url_request_job_factory.h"
 #include "v8/include/v8.h"
@@ -18,6 +19,8 @@ class FilePath;
 }
 
 namespace atom {
+
+class AtomBrowserContext;
 
 // Ask JS which type of job it wants, and then delegate corresponding methods.
 class AdapterRequestJob : public net::URLRequestJob {
@@ -40,6 +43,8 @@ class AdapterRequestJob : public net::URLRequestJob {
   net::Filter* SetupFilter() const override;
   bool GetMimeType(std::string* mime_type) const override;
   bool GetCharset(std::string* charset) override;
+  void GetResponseInfo(net::HttpResponseInfo* info) override;
+  int GetResponseCode() const override;
 
   base::WeakPtr<AdapterRequestJob> GetWeakPtr();
 
@@ -56,6 +61,10 @@ class AdapterRequestJob : public net::URLRequestJob {
                                const std::string& charset,
                                scoped_refptr<base::RefCountedBytes> data);
   void CreateFileJobAndStart(const base::FilePath& path);
+  void CreateHttpJobAndStart(AtomBrowserContext* browser_context,
+                             const GURL& url,
+                             const std::string& method,
+                             const std::string& referrer);
   void CreateJobFromProtocolHandlerAndStart();
 
  private:

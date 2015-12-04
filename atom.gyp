@@ -4,7 +4,7 @@
     'product_name%': 'Electron',
     'company_name%': 'GitHub, Inc',
     'company_abbr%': 'github',
-    'version%': '0.27.2',
+    'version%': '0.28.3',
 
     'atom_source_root': '<!(["python", "tools/atom_source_root.py"])',
   },
@@ -45,6 +45,7 @@
           'dependencies': [
             '<(project_name)_framework',
             '<(project_name)_helper',
+            'vendor/breakpad/breakpad.gyp:dump_syms',
           ],
           'xcode_settings': {
             'ATOM_BUNDLE_ID': 'com.<(company_abbr).<(project_name)',
